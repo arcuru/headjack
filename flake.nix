@@ -1,5 +1,5 @@
 {
-  description = "Headjack - Jack some (AI) heads into Matrix.";
+  description = "Headjack - Jack into Matrix.";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -36,13 +36,6 @@
     inputs.flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import inputs.nixpkgs {
         inherit system;
-        overlays = [
-          (_: prev: {
-            aichat-git = import ./nix/aichat-git.nix {
-              inherit (prev) lib stdenv darwin rustPlatform fetchFromGitHub pkg-config;
-            };
-          })
-        ];
       };
 
       inherit (pkgs) lib;
@@ -76,12 +69,12 @@
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
       # Build the actual crate itself, reusing the cargoArtifacts
-      headjack-unwrapped = craneLib.buildPackage commonArgs;
+      headjack = craneLib.buildPackage commonArgs;
     in {
       checks =
         {
           # Build the final package as part of `nix flake check` for convenience
-          inherit (self.packages.${system}) headjack;
+          inherit headjack;
 
           # Run clippy (and deny all warnings) on the crate source
           headjack-clippy =
@@ -126,32 +119,9 @@
         };
 
       packages = rec {
-        inherit headjack-unwrapped;
-        # Wrap headjack to include the path to aichat
-        headjack =
-          pkgs.runCommand headjack-unwrapped.name {
-            inherit (headjack-unwrapped) pname version;
-            nativeBuildInputs = [
-              pkgs.makeWrapper
-            ];
-          } ''
-            mkdir -p $out/bin
-            cp ${headjack-unwrapped}/bin/headjack $out/bin
-            wrapProgram $out/bin/headjack \
-              --prefix PATH : ${lib.makeBinPath [
-              pkgs.aichat-git
-            ]}
-          '';
+        inherit headjack;
         # Expose this for use by any downstream users
-        aichat-git = pkgs.aichat-git;
         default = headjack;
-      };
-
-      apps = rec {
-        default = headjack;
-        headjack = inputs.flake-utils.lib.mkApp {
-          drv = self.packages.${system}.headjack;
-        };
       };
 
       devShells.default = pkgs.mkShell {
@@ -185,11 +155,5 @@
         # Many tools read this to find the sources for rust stdlib
         RUST_SRC_PATH = "${rustSrc}/lib/rustlib/src/rust/library";
       };
-    })
-    // {
-      overlays.default = final: prev: {
-        headjack = self.packages.${final.system}.headjack;
-      };
-      homeManagerModules.default = import ./nix/home-manager.nix;
-    };
+    });
 }
