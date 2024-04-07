@@ -20,6 +20,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
+use tracing::{warn, error, info};
 
 // The structure of the matrix rust sdk requires that any state that you need access to in the callbacks
 // is 'static.
@@ -179,8 +180,8 @@ impl Bot {
                     break;
                 }
                 Err(error) => {
-                    eprintln!("An error occurred during initial sync: {error}");
-                    eprintln!("Trying again…");
+                    error!("An error occurred during initial sync: {error}");
+                    error!("Trying again…");
                 }
             }
         }
@@ -220,31 +221,32 @@ impl Bot {
     pub fn join_rooms(&self) {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
+        let username = self.full_name();
         client.add_event_handler(
             |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
                     // the invite we've seen isn't for us, but for someone else. ignore
                     return;
                 }
-                if !is_allowed(allow_list, room_member.sender.as_str()) {
+                if !is_allowed(allow_list, room_member.sender.as_str(), &username) {
                     // Sender is not on the allowlist
                     return;
                 }
-                eprintln!("Received stripped room member event: {:?}", room_member);
+                info!("Received stripped room member event: {:?}", room_member);
 
                 // The event handlers are called before the next sync begins, but
                 // methods that change the state of a room (joining, leaving a room)
                 // wait for the sync to return the new room state so we need to spawn
                 // a new task for them.
                 tokio::spawn(async move {
-                    eprintln!("Autojoining room {}", room.room_id());
+                    info!("Autojoining room {}", room.room_id());
                     let mut delay = 2;
 
                     while let Err(err) = room.join().await {
                         // retry autojoin due to synapse sending invites, before the
                         // invited user can join for more information see
                         // https://github.com/matrix-org/synapse/issues/4345
-                        eprintln!(
+                        warn!(
                             "Failed to join room {} ({err:?}), retrying in {delay}s",
                             room.room_id()
                         );
@@ -253,11 +255,11 @@ impl Bot {
                         delay *= 2;
 
                         if delay > 3600 {
-                            eprintln!("Can't join room {} ({err:?})", room.room_id());
+                            error!("Can't join room {} ({err:?})", room.room_id());
                             break;
                         }
                     }
-                    eprintln!("Successfully joined room {}", room.room_id());
+                    info!("Successfully joined room {}", room.room_id());
                 });
             },
         );
@@ -272,6 +274,7 @@ impl Bot {
     {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
+        let username = self.full_name();
         client.add_event_handler(
             move |event: OriginalSyncRoomMessageEvent, room: Room| async move {
                 // Ignore messages from rooms we're not in
@@ -281,7 +284,7 @@ impl Bot {
                 let MessageType::Text(text_content) = &event.content.msgtype else {
                     return;
                 };
-                if !is_allowed(allow_list, event.sender.as_str()) {
+                if !is_allowed(allow_list, event.sender.as_str(), &username) {
                     // Sender is not on the allowlist
                     return;
                 }
@@ -290,7 +293,7 @@ impl Bot {
                     return;
                 }
                 if let Err(e) = callback(event.sender.clone(), body.to_string(), room).await {
-                    eprintln!("Error responding to: {}\nError: {:?}", body, e);
+                    error!("Error responding to: {}\nError: {:?}", body, e);
                 }
             },
         );
@@ -323,6 +326,7 @@ impl Bot {
         }
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
+        let username = self.full_name();
         let command = command.to_owned();
         client.add_event_handler(
             // This handler matches pretty much every sync event, we'll use that and then filter ourselves
@@ -344,7 +348,7 @@ impl Bot {
                     return;
                 };
                 let text_content = event.content.body();
-                if !is_allowed(allow_list, event.sender.as_str()) {
+                if !is_allowed(allow_list, event.sender.as_str(), &username) {
                     // Sender is not on the allowlist
                     return;
                 }
@@ -359,7 +363,7 @@ impl Bot {
                         // Call the callback
                         if let Err(e) = callback(event.sender.clone(), body.to_string(), room).await
                         {
-                            eprintln!("Error running command: {} - {:?}", command, e);
+                            error!("Error running command: {} - {:?}", command, e);
                         }
                     }
                 }
@@ -427,6 +431,11 @@ impl Bot {
             .unwrap_or_else(|| self.config.login.username.clone())
     }
 
+    /// Get the full name of the bot
+    pub fn full_name(&self) -> String {
+        self.client().user_id().unwrap().to_string()
+    }
+
     /// Get the client used by the bot
     pub fn client(&self) -> &Client {
         self.client.as_ref().expect("client not initialized")
@@ -434,13 +443,16 @@ impl Bot {
 }
 
 /// Verify if the sender is on the allow_list
-fn is_allowed(allow_list: Option<String>, sender: &str) -> bool {
-    // FIXME: Check to see if it's from ourselves, in which case we should do nothing
-    if let Some(allow_list) = allow_list {
-        let regex = Regex::new(&allow_list).expect("Invalid regular expression");
-        return regex.is_match(sender);
+fn is_allowed(allow_list: Option<String>, sender: &str, username: &str) -> bool {
+    // Check to see if it's from ourselves, in which case we should ignore it
+    if sender == username {
+        false
     }
-    false
+    else if let Some(allow_list) = allow_list {
+        let regex = Regex::new(&allow_list).expect("Invalid regular expression");
+        regex.is_match(sender)
+    } else {
+        false}
 }
 
 /// Check if the message is a command
@@ -461,7 +473,7 @@ fn expand_tilde(path: &str) -> String {
 
 /// Restore a previous session.
 async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<String>)> {
-    eprintln!(
+    info!(
         "Previous session found in '{}'",
         session_file.to_string_lossy()
     );
@@ -481,12 +493,12 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
         .build()
         .await?;
 
-    eprintln!("Restoring session for {}…", &user_session.meta.user_id);
+    info!("Restoring session for {}…", &user_session.meta.user_id);
 
     // Restore the Matrix user session.
     client.restore_session(user_session).await?;
 
-    eprintln!("Done!");
+    info!("Done!");
 
     Ok((client, sync_token))
 }
@@ -499,7 +511,7 @@ async fn login(
     username: &str,
     password: &Option<String>,
 ) -> anyhow::Result<Client> {
-    eprintln!("No previous session found, logging in…");
+    info!("No previous session found, logging in…");
 
     let (client, client_session) = build_client(state_dir, homeserver_url.to_owned()).await?;
     let matrix_auth = client.matrix_auth();
@@ -524,10 +536,10 @@ async fn login(
         .await
     {
         Ok(_) => {
-            eprintln!("Logged in as {username}");
+            info!("Logged in as {username}");
         }
         Err(error) => {
-            eprintln!("Error logging in: {error}");
+            error!("Error logging in: {error}");
             return Err(error.into());
         }
     }
@@ -543,7 +555,7 @@ async fn login(
     })?;
     fs::write(session_file, serialized_session).await?;
 
-    eprintln!("Session persisted in {}", session_file.to_string_lossy());
+    info!("Session persisted in {}", session_file.to_string_lossy());
 
     Ok(client)
 }
