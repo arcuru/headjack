@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [0.2.0] - 2024-04-07
 
 ### Bug Fixes
 
@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Checking in aichat-git for the nix build
 - Make the state directory configurable
 - Send the userid to the callbacks
+- Split chaz out
 
 ### Miscellaneous Tasks
 
