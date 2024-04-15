@@ -99,6 +99,7 @@ pub struct BotConfig {
 }
 
 /// A Matrix Bot
+#[derive(Debug, Clone)]
 pub struct Bot {
     config: BotConfig,
 
@@ -260,6 +261,65 @@ impl Bot {
                         }
                     }
                     info!("Successfully joined room {}", room.room_id());
+                });
+            },
+        );
+    }
+
+    /// Adds a callback to join rooms we've been invited to
+    /// Ignores invites from anyone who is not on the allow_list
+    /// Calls the callback each time a room is joined
+    pub fn join_rooms_callback<F, Fut>(&self, callback: Option<F>)
+    where
+        F: FnOnce(Room) -> Fut + Send + 'static + Clone + Sync,
+        Fut: std::future::Future<Output = Result<(), ()>> + Send + 'static,
+    {
+        let client = self.client.as_ref().expect("client not initialized");
+        let allow_list = self.config.allow_list.clone();
+        let username = self.full_name();
+        client.add_event_handler(
+            |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
+                if room_member.state_key != client.user_id().unwrap() {
+                    // the invite we've seen isn't for us, but for someone else. ignore
+                    return;
+                }
+                if !is_allowed(allow_list, room_member.sender.as_str(), &username) {
+                    // Sender is not on the allowlist
+                    return;
+                }
+                info!("Received stripped room member event: {:?}", room_member);
+
+                // The event handlers are called before the next sync begins, but
+                // methods that change the state of a room (joining, leaving a room)
+                // wait for the sync to return the new room state so we need to spawn
+                // a new task for them.
+                tokio::spawn(async move {
+                    info!("Autojoining room {}", room.room_id());
+                    let mut delay = 2;
+
+                    while let Err(err) = room.join().await {
+                        // retry autojoin due to synapse sending invites, before the
+                        // invited user can join for more information see
+                        // https://github.com/matrix-org/synapse/issues/4345
+                        warn!(
+                            "Failed to join room {} ({err:?}), retrying in {delay}s",
+                            room.room_id()
+                        );
+
+                        sleep(Duration::from_secs(delay)).await;
+                        delay *= 2;
+
+                        if delay > 3600 {
+                            error!("Can't join room {} ({err:?})", room.room_id());
+                            break;
+                        }
+                    }
+                    info!("Successfully joined room {}", room.room_id());
+                    if let Some(callback) = callback {
+                        if let Err(e) = callback(room).await {
+                            error!("Error joining room: {:?}", e)
+                        }
+                    }
                 });
             },
         );
