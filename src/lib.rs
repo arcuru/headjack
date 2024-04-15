@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
-use tracing::{warn, error, info};
+use tracing::{error, info, warn};
 
 // The structure of the matrix rust sdk requires that any state that you need access to in the callbacks
 // is 'static.
@@ -447,12 +447,12 @@ fn is_allowed(allow_list: Option<String>, sender: &str, username: &str) -> bool 
     // Check to see if it's from ourselves, in which case we should ignore it
     if sender == username {
         false
-    }
-    else if let Some(allow_list) = allow_list {
+    } else if let Some(allow_list) = allow_list {
         let regex = Regex::new(&allow_list).expect("Invalid regular expression");
         regex.is_match(sender)
     } else {
-        false}
+        false
+    }
 }
 
 /// Check if the message is a command
