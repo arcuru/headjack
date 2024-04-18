@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2024-04-18
+
+### Features
+
+- Don't respond to our own messages
+- Adding a callback on joining rooms
+
+### Miscellaneous Tasks
+
+- Release v0.3.0
+
+### Styling
+
+- Fix formatting
+
 ## [0.2.0] - 2024-04-07
 
 ### Bug Fixes
@@ -29,6 +44,7 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous Tasks
 
 - Bump the version to v0.2.0
+- Release v0.2.0
 
 ### Styling
 
