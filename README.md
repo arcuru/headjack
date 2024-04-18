@@ -7,4 +7,5 @@ It wraps the matrix-rust-sdk to provide an easier interface for writing bots in 
 
 ## Project using this
 
-- [chaz](https://github.com/arcuru/chaz)
+- [chaz](https://github.com/arcuru/chaz): Connect Matrix with any LLM service.
+- [pokem](https://github.com/arcuru/pokem): Send notifications using HTTP requests, or a CLI app.
