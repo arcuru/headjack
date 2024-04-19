@@ -50,6 +50,8 @@ struct HelpText {
     command: String,
     /// Single line of help text
     short: Option<String>,
+    /// Argument format.
+    args: Option<String>,
 }
 
 struct State {
@@ -96,17 +98,20 @@ pub struct BotConfig {
     /// Set the state directory to use
     /// Defaults to $XDG_STATE_HOME/username
     pub state_dir: Option<String>,
+    /// Set the prefix for bot commands. Defaults to "!($name) "
+    pub command_prefix: Option<String>,
 }
 
 /// A Matrix Bot
 #[derive(Debug, Clone)]
 pub struct Bot {
+    /// Configuration for the bot.
     config: BotConfig,
 
-    /// The current sync token
+    /// The current sync token.
     sync_token: Option<String>,
 
-    /// The matrix client
+    /// The matrix client.
     client: Option<Client>,
 }
 
@@ -193,22 +198,28 @@ impl Bot {
     /// This adds a command that prints the help
     async fn register_help_command(&self) {
         let name = self.name();
+        let command_prefix = self.command_prefix();
         self.register_text_command(
             "help",
-            "Show this message".to_string(),
+            None,
+            Some("Show this message".to_string()),
             |_, _, room| async move {
                 let global_state = GLOBAL_STATE.lock().await;
                 let state = global_state.get(&name).unwrap();
                 let state = state.lock().await;
                 let help = &state.help;
-                let mut response = String::from(".help\n\nAvailable commands:\n");
+                let mut response = format!("`{}help`\n\nAvailable commands:", command_prefix);
 
                 for h in help {
+                    response.push_str(&format!("\n`{}{}", command_prefix, h.command));
+                    if let Some(args) = &h.args {
+                        response.push_str(&format!(" {}", args));
+                    }
                     if let Some(short) = &h.short {
-                        response.push_str(&format!("- .{} - {}\n", h.command, short));
+                        response.push_str(&format!("` - {}", short));
                     }
                 }
-                room.send(RoomMessageEventContent::text_plain(response))
+                room.send(RoomMessageEventContent::text_markdown(response))
                     .await
                     .map_err(|_| ())?;
                 Ok(())
@@ -335,6 +346,7 @@ impl Bot {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
+        let command_prefix = self.command_prefix();
         client.add_event_handler(
             move |event: OriginalSyncRoomMessageEvent, room: Room| async move {
                 // Ignore messages from rooms we're not in
@@ -349,7 +361,8 @@ impl Bot {
                     return;
                 }
                 let body = text_content.body.trim_start();
-                if is_command(body) {
+                // _Ignore_ the message if it's a command
+                if is_command(&command_prefix, body) {
                     return;
                 }
                 if let Err(e) = callback(event.sender.clone(), body.to_string(), room).await {
@@ -367,6 +380,7 @@ impl Bot {
     pub async fn register_text_command<F, Fut, OptString>(
         &self,
         command: &str,
+        args: OptString,
         short_help: OptString,
         callback: F,
     ) where
@@ -381,6 +395,7 @@ impl Bot {
             let mut state = state.lock().await;
             state.help.push(HelpText {
                 command: command.to_string(),
+                args: args.into(),
                 short: short_help.into(),
             });
         }
@@ -388,6 +403,7 @@ impl Bot {
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
         let command = command.to_owned();
+        let command_prefix = self.command_prefix();
         client.add_event_handler(
             // This handler matches pretty much every sync event, we'll use that and then filter ourselves
             move |event: AnySyncMessageLikeEvent, room: Room| async move {
@@ -412,14 +428,9 @@ impl Bot {
                     // Sender is not on the allowlist
                     return;
                 }
-
                 let body = text_content.trim_start();
-                if !is_command(body) {
-                    return;
-                }
-                let input_command = body.split_whitespace().next();
-                if let Some(input_command) = input_command {
-                    if input_command[1..] == command {
+                if let Some(input_command) = get_command(&command_prefix, body) {
+                    if input_command == command {
                         // Call the callback
                         if let Err(e) = callback(event.sender.clone(), body.to_string(), room).await
                         {
@@ -500,6 +511,21 @@ impl Bot {
     pub fn client(&self) -> &Client {
         self.client.as_ref().expect("client not initialized")
     }
+
+    /// Get the command prefix for the bot
+    pub fn command_prefix(&self) -> String {
+        let prefix = self
+            .config
+            .command_prefix
+            .clone()
+            .unwrap_or_else(|| format!("!{} ", self.name()));
+        // If the prefix is 1 character, we'll return it as it. If it's more than 1 character, we'll ensure it ends with a space
+        if prefix.len() == 1 || prefix.ends_with(' ') {
+            prefix
+        } else {
+            format!("{} ", prefix)
+        }
+    }
 }
 
 /// Verify if the sender is on the allow_list
@@ -515,9 +541,20 @@ fn is_allowed(allow_list: Option<String>, sender: &str, username: &str) -> bool 
     }
 }
 
-/// Check if the message is a command
-pub fn is_command(text: &str) -> bool {
-    text.starts_with('.') && !text.starts_with("..")
+/// Check if the message is a command.
+pub fn is_command(command_prefix: &str, text: &str) -> bool {
+    text.starts_with(command_prefix)
+}
+
+/// Get the command, if it is a command.
+pub fn get_command<'a>(command_prefix: &str, text: &'a str) -> Option<&'a str> {
+    if text.starts_with(command_prefix) {
+        text.trim_start_matches(command_prefix)
+            .split_whitespace()
+            .next()
+    } else {
+        None
+    }
 }
 
 /// Fixup the path if they've provided a ~
