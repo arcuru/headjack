@@ -5,6 +5,7 @@ use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use matrix_sdk::ruma::events::AnySyncMessageLikeEvent;
 use matrix_sdk::ruma::OwnedUserId;
+use matrix_sdk::RoomMemberships;
 use matrix_sdk::RoomState;
 use matrix_sdk::{
     config::SyncSettings, matrix_auth::MatrixSession, ruma::api::client::filter::FilterDefinition,
@@ -100,6 +101,9 @@ pub struct BotConfig {
     pub state_dir: Option<String>,
     /// Set the prefix for bot commands. Defaults to "!($name) "
     pub command_prefix: Option<String>,
+    /// The Room size limit.
+    /// Will refuse to join rooms exceeding this limit.
+    pub room_size_limit: Option<usize>,
 }
 
 /// A Matrix Bot
@@ -234,8 +238,9 @@ impl Bot {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
+        let room_size_limit = self.config.room_size_limit.clone();
         client.add_event_handler(
-            |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
+            move |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
                     // the invite we've seen isn't for us, but for someone else. ignore
                     return;
@@ -271,6 +276,17 @@ impl Bot {
                             break;
                         }
                     }
+                    // Immediately leave if the room is too large
+                    if is_room_too_large(&room, room_size_limit).await {
+                        warn!(
+                            "Room {} has too many members, refusing to join",
+                            room.room_id()
+                        );
+                        if let Err(e) = room.leave().await {
+                            error!("Error leaving room: {:?}", e);
+                        }
+                        return;
+                    }
                     info!("Successfully joined room {}", room.room_id());
                 });
             },
@@ -288,8 +304,9 @@ impl Bot {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
+        let room_size_limit = self.config.room_size_limit.clone();
         client.add_event_handler(
-            |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
+            move |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
                     // the invite we've seen isn't for us, but for someone else. ignore
                     return;
@@ -324,6 +341,17 @@ impl Bot {
                             error!("Can't join room {} ({err:?})", room.room_id());
                             break;
                         }
+                    }
+                    // Immediately leave if the room is too large
+                    if is_room_too_large(&room, room_size_limit).await {
+                        warn!(
+                            "Room {} has too many members, refusing to join",
+                            room.room_id()
+                        );
+                        if let Err(e) = room.leave().await {
+                            error!("Error leaving room: {:?}", e);
+                        }
+                        return;
                     }
                     info!("Successfully joined room {}", room.room_id());
                     if let Some(callback) = callback {
@@ -711,4 +739,17 @@ async fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::
     fs::write(session_file, serialized_session).await?;
 
     Ok(())
+}
+
+/// Check if the room exceeds the size limit
+async fn is_room_too_large(room: &Room, room_size_limit: Option<usize>) -> bool {
+    if let Some(room_size_limit) = room_size_limit {
+        if let Ok(members) = room.members(RoomMemberships::ACTIVE).await {
+            members.len() > room_size_limit
+        } else {
+            false
+        }
+    } else {
+        false
+    }
 }
