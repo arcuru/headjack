@@ -238,7 +238,7 @@ impl Bot {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
-        let room_size_limit = self.config.room_size_limit.clone();
+        let room_size_limit = self.config.room_size_limit;
         client.add_event_handler(
             move |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
@@ -304,7 +304,7 @@ impl Bot {
         let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
-        let room_size_limit = self.config.room_size_limit.clone();
+        let room_size_limit = self.config.room_size_limit;
         client.add_event_handler(
             move |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
