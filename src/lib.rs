@@ -23,6 +23,9 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+mod utils;
+pub use utils::*;
+
 // The structure of the matrix rust sdk requires that any state that you need access to in the callbacks
 // is 'static.
 // This is a bit of a pain, so we need to use a global state to store the actual bot state for ease of use.
