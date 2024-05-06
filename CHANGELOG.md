@@ -2,16 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.3.0] - 2024-04-18
+## [0.4.0] - 2024-05-06
+
+### Bug Fixes
+
+- Fixing clippy errors
+
+### Documentation
+
+- Add pokem to the list of projects
 
 ### Features
 
 - Don't respond to our own messages
 - Adding a callback on joining rooms
+- Allow setting a custom command prefix
+- Add a room size limit
 
 ### Miscellaneous Tasks
 
 - Release v0.3.0
+- Bump to v0.4.0
+- Cargo update
+- Nix flake update
 
 ### Styling
 
