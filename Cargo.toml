@@ -1,11 +1,11 @@
 [package]
 name = "headjack"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Patrick Jackson <patrick@jackson.dev>"]
 readme = "README.md"
 license = "MIT"
-description = "Headjack - Jack into Matrix."
+description = "Matrix Bot Framework. Jack into Matrix."
 repository = "https://github.com/arcuru/headjack"
 homepage = "https://github.com/arcuru/headjack"
 
