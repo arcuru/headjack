@@ -368,7 +368,11 @@ impl Bot {
     /// Useful for bots that want to act more like chatbots, having some response to every message
     pub fn register_text_handler<F, Fut>(&self, callback: F)
     where
-        F: FnOnce(OwnedUserId, String, Room) -> Fut + Send + 'static + Clone + Sync,
+        F: FnOnce(OwnedUserId, String, Room, OriginalSyncRoomMessageEvent) -> Fut
+            + Send
+            + 'static
+            + Clone
+            + Sync,
         Fut: std::future::Future<Output = Result<(), ()>> + Send + 'static,
     {
         let client = self.client.as_ref().expect("client not initialized");
@@ -381,7 +385,7 @@ impl Bot {
                 if room.state() != RoomState::Joined {
                     return;
                 }
-                let MessageType::Text(text_content) = &event.content.msgtype else {
+                let MessageType::Text(text_content) = &event.content.msgtype.clone() else {
                     return;
                 };
                 if !is_allowed(allow_list, event.sender.as_str(), &username) {
@@ -393,7 +397,9 @@ impl Bot {
                 if is_command(&command_prefix, body) {
                     return;
                 }
-                if let Err(e) = callback(event.sender.clone(), body.to_string(), room).await {
+                if let Err(e) =
+                    callback(event.sender.clone(), body.to_string(), room, event.clone()).await
+                {
                     error!("Error responding to: {}\nError: {:?}", body, e);
                 }
             },
