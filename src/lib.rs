@@ -483,19 +483,28 @@ impl Bot {
         if let Some(sync_token) = &self.sync_token {
             sync_settings = sync_settings.token(sync_token);
         }
-        // This loops until we kill the program or an error happens.
-        client
-            .sync_with_result_callback(sync_settings, |sync_result| async move {
-                let response = sync_result?;
+        // This loops until we kill the program or it exits successfully
+        loop {
+            match client
+                .sync_with_result_callback(sync_settings.clone(), |sync_result| async move {
+                    let response = sync_result?;
 
-                // We persist the token each time to be able to restore our session
-                self.persist_sync_token(response.next_batch)
-                    .await
-                    .map_err(|err| Error::UnknownError(err.into()))?;
+                    // We persist the token each time to be able to restore our session
+                    self.persist_sync_token(response.next_batch)
+                        .await
+                        .map_err(|err| Error::UnknownError(err.into()))?;
 
-                Ok(LoopCtrl::Continue)
-            })
-            .await?;
+                    Ok(LoopCtrl::Continue)
+                })
+                .await
+            {
+                Ok(_) => break,
+                Err(e) => {
+                    error!("Error during sync: {:?}. Retrying...", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
 
         Ok(())
     }
