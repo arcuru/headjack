@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 /// Utility functions for working with Matrix.
 use matrix_sdk::{ruma::events::tag::TagInfo, Room};
 
@@ -156,6 +158,17 @@ impl<'a> Tags<'a> {
     /// Get the tags.
     pub fn tags(&self) -> &Vec<String> {
         &self.tags
+    }
+
+    /// Get the KV pairs.
+    pub fn get_kvs(&self) -> HashMap<String, String> {
+        let mut kvs = HashMap::new();
+        for tag in &self.tags {
+            if let Some((key, value)) = tag.split_once('=') {
+                kvs.insert(key.to_string(), value.to_string());
+            }
+        }
+        kvs
     }
 
     /// Check if the tags will need to be synced.
