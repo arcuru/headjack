@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0](https://github.com/arcuru/headjack/compare/v0.4.0...v0.5.0) - 2024-10-25
+
+### Added
+
+- add key-value pair getter for room tags
+- adding tag helpers
+- [**breaking**] callback with the full message event
+
+### Other
+
+- install release-plz
+- adding Codeberg sync
+- add FUNDING.yml
+
 ## [0.4.0] - 2024-05-06
 
 ### Bug Fixes
