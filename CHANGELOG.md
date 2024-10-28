@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1](https://github.com/arcuru/headjack/compare/v0.5.0...v0.5.1) - 2024-10-28
+
+### Other
+
+- bump nix deps
+- taskfile updates
+- loosen and update deppendencies
+
 ## [0.5.0](https://github.com/arcuru/headjack/compare/v0.4.0...v0.5.0) - 2024-10-25
 
 ### Added
