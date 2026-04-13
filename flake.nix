@@ -161,7 +161,7 @@
             deadnix
             git-cliff
             just
-            nodePackages.prettier
+            prettier
             nix-fast-build
             statix
             config.treefmt.build.wrapper
