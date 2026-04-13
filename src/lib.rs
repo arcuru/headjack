@@ -1,17 +1,17 @@
 use lazy_static::lazy_static;
+use matrix_sdk::RoomMemberships;
+use matrix_sdk::RoomState;
+use matrix_sdk::ruma::OwnedUserId;
+use matrix_sdk::ruma::events::AnySyncMessageLikeEvent;
 use matrix_sdk::ruma::events::room::member::StrippedRoomMemberEvent;
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
-use matrix_sdk::ruma::events::AnySyncMessageLikeEvent;
-use matrix_sdk::ruma::OwnedUserId;
-use matrix_sdk::RoomMemberships;
-use matrix_sdk::RoomState;
 use matrix_sdk::{
-    config::SyncSettings, matrix_auth::MatrixSession, ruma::api::client::filter::FilterDefinition,
-    Client, Error, LoopCtrl, Room,
+    Client, Error, LoopCtrl, Room, config::SyncSettings, matrix_auth::MatrixSession,
+    ruma::api::client::filter::FilterDefinition,
 };
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use rand::{Rng, distributions::Alphanumeric, thread_rng};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
