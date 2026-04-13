@@ -11,7 +11,6 @@ use matrix_sdk::{
     Client, Error, LoopCtrl, Room, config::SyncSettings, matrix_auth::MatrixSession,
     ruma::api::client::filter::FilterDefinition,
 };
-use rand::{Rng, distributions::Alphanumeric, thread_rng};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -623,7 +622,6 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
     // Build the client with the previous settings from the session.
     let client = Client::builder()
         .homeserver_url(client_session.homeserver)
-        .sqlite_store(client_session.db_path, Some(&client_session.passphrase))
         .build()
         .await?;
 
@@ -696,33 +694,11 @@ async fn login(
 
 /// Build a new client.
 async fn build_client(
-    state_dir: &Path,
+    _state_dir: &Path,
     homeserver: String,
 ) -> anyhow::Result<(Client, ClientSession)> {
-    let mut rng = thread_rng();
-
-    // Place the db into a subfolder, just in case multiple clients are running
-    let db_subfolder: String = (&mut rng)
-        .sample_iter(Alphanumeric)
-        .take(7)
-        .map(char::from)
-        .collect();
-    let db_path = state_dir.join(db_subfolder);
-
-    // Generate a random passphrase.
-    // It will be saved in the session file and used to encrypt the database.
-    let passphrase: String = (&mut rng)
-        .sample_iter(Alphanumeric)
-        .take(32)
-        .map(char::from)
-        .collect();
-
     match Client::builder()
         .homeserver_url(&homeserver)
-        // We use the SQLite store, which is enabled by default. This is the crucial part to
-        // persist the encryption setup.
-        // Note that other store backends are available and you can even implement your own.
-        .sqlite_store(&db_path, Some(&passphrase))
         .build()
         .await
     {
@@ -730,8 +706,8 @@ async fn build_client(
             client,
             ClientSession {
                 homeserver,
-                db_path,
-                passphrase,
+                db_path: PathBuf::new(),
+                passphrase: String::new(),
             },
         )),
         Err(error) => Err(error.into()),
