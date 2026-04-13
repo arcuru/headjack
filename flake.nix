@@ -92,7 +92,7 @@
           };
 
         lintDefaults = {
-          inherit headjack-clippy headjack-fmt;
+          inherit headjack-clippy;
         };
 
         lintAll =
@@ -137,10 +137,7 @@
           programs = {
             alejandra.enable = true;
             prettier.enable = true;
-            rustfmt = {
-              enable = true;
-              package = toolChain;
-            };
+            rustfmt.enable = true;
           };
         };
 

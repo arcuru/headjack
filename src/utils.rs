@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 /// Utility functions for working with Matrix.
-use matrix_sdk::{ruma::events::tag::TagInfo, Room};
+use matrix_sdk::{Room, ruma::events::tag::TagInfo};
 
 /// Get all tags in a room that start with a given namespace.
 /// Tags are supposed to be namespaced to the application in the form
