@@ -75,7 +75,10 @@
 
         headjack-doc = craneLib.cargoDoc buildArgs;
         headjack-fmt = craneLib.cargoFmt buildArgs;
-        headjack-nextest = craneLib.cargoNextest buildArgs;
+        headjack-nextest = craneLib.cargoNextest (buildArgs
+          // {
+            cargoNextestExtraArgs = "--no-tests=warn";
+          });
 
         headjack-deny = craneLib.mkCargoDerivation (buildArgs
           // {
