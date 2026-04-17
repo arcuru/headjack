@@ -7,7 +7,8 @@ use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use matrix_sdk::{
-    Client, Error, LoopCtrl, Room, config::SyncSettings, matrix_auth::MatrixSession,
+    Client, Error, LoopCtrl, Room, config::SyncSettings,
+    authentication::matrix::MatrixSession,
     ruma::api::client::filter::FilterDefinition,
 };
 use regex::Regex;
