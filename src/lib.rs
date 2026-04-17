@@ -1,5 +1,6 @@
 use matrix_sdk::RoomMemberships;
 use matrix_sdk::RoomState;
+use matrix_sdk::event_handler::{EventHandler, EventHandlerHandle};
 use matrix_sdk::ruma::OwnedUserId;
 use matrix_sdk::ruma::events::AnySyncMessageLikeEvent;
 use matrix_sdk::ruma::events::room::member::StrippedRoomMemberEvent;
@@ -12,11 +13,11 @@ use matrix_sdk::{
     ruma::api::client::filter::FilterDefinition,
 };
 use regex::Regex;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
 use tokio::sync::Mutex;
@@ -26,14 +27,8 @@ use tracing::{error, info, warn};
 mod utils;
 pub use utils::*;
 
-// The structure of the matrix rust sdk requires that any state that you need access to in the callbacks
-// is 'static.
-// This is a bit of a pain, so we need to use a global state to store the actual bot state for ease of use.
-
-/// Stores the global state for all bots.
-/// The key is the user ID of the bot
-static GLOBAL_STATE: LazyLock<Mutex<HashMap<String, Mutex<State>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+// Re-export key types for consumers
+pub use matrix_sdk::event_handler::{self, SyncEvent};
 
 /// The data needed to re-build a client.
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,6 +57,14 @@ struct State {
     help: Vec<HelpText>,
 }
 
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("help_count", &self.help.len())
+            .finish()
+    }
+}
+
 /// The full session to persist.
 /// It contains the data to re-build the client and the Matrix user session.
 /// This will be synced to disk so that we can restore the session later.
@@ -88,7 +91,7 @@ pub struct Login {
     pub password: Option<String>,
 }
 
-/// The bot struct, holds all configuration needed for the bot
+/// Configuration for creating a bot. Call `login()` to connect and get a `Bot`.
 #[derive(Debug, Clone)]
 pub struct BotConfig {
     /// Login info for matrix
@@ -108,8 +111,25 @@ pub struct BotConfig {
     pub room_size_limit: Option<usize>,
 }
 
-/// A Matrix Bot
-#[derive(Debug, Clone)]
+/// Configuration for retry behavior in `run_with_retry`.
+pub struct RetryConfig {
+    /// Delay between retries.
+    pub delay: Duration,
+    /// Maximum number of retries. `None` means unlimited.
+    pub max_retries: Option<usize>,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            delay: Duration::from_secs(5),
+            max_retries: None,
+        }
+    }
+}
+
+/// A connected Matrix Bot. Created by calling `BotConfig::login()`.
+#[derive(Debug)]
 pub struct Bot {
     /// Configuration for the bot.
     config: BotConfig,
@@ -118,32 +138,41 @@ pub struct Bot {
     sync_token: Option<String>,
 
     /// The matrix client.
-    client: Option<Client>,
+    client: Client,
+
+    /// Help text and command state, shared with handler closures.
+    state: Arc<Mutex<State>>,
+
+    /// Path to the session file on disk.
+    session_file: PathBuf,
 }
 
-impl Bot {
-    pub async fn new(config: BotConfig) -> Self {
-        let bot = Bot {
-            config,
-            sync_token: None,
-            client: None,
-        };
-        // Initialize the global state for the bot if it doesn't exist
-        let mut global_state = GLOBAL_STATE.lock().await;
-        global_state
-            .entry(bot.name())
-            .or_insert_with(|| Mutex::new(State { help: Vec::new() }));
-        bot
+impl BotConfig {
+    /// Get the name from config, falling back to username.
+    fn name(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| self.login.username.clone())
     }
 
-    /// Get the path to the session file
+    /// Get the state directory for this config.
+    fn state_dir(&self) -> PathBuf {
+        if let Some(state_dir) = &self.state_dir {
+            PathBuf::from(expand_tilde(state_dir))
+        } else {
+            dirs::state_dir()
+                .expect("no state_dir directory found")
+                .join(self.name())
+        }
+    }
+
+    /// Get the session file path.
     fn session_file(&self) -> PathBuf {
         self.state_dir().join("session")
     }
 
-    /// Login to the matrix server
-    /// Performs everything needed to login or relogin
-    pub async fn login(&mut self) -> anyhow::Result<()> {
+    /// Login to the Matrix server and return a connected `Bot`.
+    pub async fn login(self) -> anyhow::Result<Bot> {
         let state_dir = self.state_dir();
         let session_file = self.session_file();
 
@@ -151,46 +180,57 @@ impl Bot {
             restore_session(&session_file).await?
         } else {
             (
-                login(
+                do_login(
                     &state_dir,
                     &session_file,
-                    &self.config.login.homeserver_url,
-                    &self.config.login.username,
-                    &self.config.login.password,
+                    &self.login.homeserver_url,
+                    &self.login.username,
+                    &self.login.password,
                 )
                 .await?,
                 None,
             )
         };
 
-        self.sync_token = sync_token;
-        self.client = Some(client);
+        let state = Arc::new(Mutex::new(State { help: Vec::new() }));
 
-        Ok(())
+        Ok(Bot {
+            config: self,
+            sync_token,
+            client,
+            state,
+            session_file,
+        })
+    }
+}
+
+impl Bot {
+    /// Get the path to the session file
+    fn session_file(&self) -> &Path {
+        &self.session_file
     }
 
-    /// Sync to the current state of the homeserver
-    pub async fn sync(&mut self) -> anyhow::Result<()> {
-        let client = self.client.as_ref().expect("client not initialized");
-
-        // Enable room members lazy-loading, it will speed up the initial sync a lot
-        // with accounts in lots of rooms.
-        // See <https://spec.matrix.org/v1.6/client-server-api/#lazy-loading-room-members>.
+    /// Perform a single sync against the homeserver.
+    /// Returns the next_batch token on success.
+    pub async fn sync_once(&mut self) -> anyhow::Result<String> {
         let filter = FilterDefinition::with_lazy_loading();
         let mut sync_settings = SyncSettings::default().filter(filter.into());
 
-        // If we've already synced through a certain point, we'll sync the latest.
         if let Some(sync_token) = &self.sync_token {
             sync_settings = sync_settings.token(sync_token);
         }
 
+        let response = self.client.sync_once(sync_settings).await?;
+        self.sync_token = Some(response.next_batch.clone());
+        persist_sync_token(self.session_file(), response.next_batch.clone()).await?;
+        Ok(response.next_batch)
+    }
+
+    /// Sync to the current state of the homeserver, retrying on transient errors.
+    pub async fn sync(&mut self) -> anyhow::Result<()> {
         loop {
-            match client.sync_once(sync_settings.clone()).await {
-                Ok(response) => {
-                    self.sync_token = Some(response.next_batch.clone());
-                    persist_sync_token(&self.session_file(), response.next_batch.clone()).await?;
-                    break;
-                }
+            match self.sync_once().await {
+                Ok(_) => break,
                 Err(error) => {
                     error!("An error occurred during initial sync: {error}");
                     error!("Trying again…");
@@ -201,17 +241,14 @@ impl Bot {
     }
 
     /// Create the help command
-    /// This adds a command that prints the help
     async fn register_help_command(&self) {
-        let name = self.name();
+        let state = self.state.clone();
         let command_prefix = self.command_prefix();
         self.register_text_command(
             "help",
             None,
             Some("Show this message".to_string()),
             |_, _, room| async move {
-                let global_state = GLOBAL_STATE.lock().await;
-                let state = global_state.get(&name).unwrap();
                 let state = state.lock().await;
                 let help = &state.help;
                 let mut response = format!("`{}help`\n\nAvailable commands:", command_prefix);
@@ -234,37 +271,37 @@ impl Bot {
         .await;
     }
 
-    /// Adds a callback to join rooms we've been invited to
-    /// Ignores invites from anyone who is not on the allow_list
+    /// Register a generic event handler, delegating to the underlying matrix-sdk Client.
+    /// This allows handling any event type without needing explicit headjack support.
+    pub fn add_event_handler<Ev, Ctx, H>(&self, handler: H) -> EventHandlerHandle
+    where
+        Ev: SyncEvent + DeserializeOwned + Send + 'static,
+        H: EventHandler<Ev, Ctx>,
+    {
+        self.client.add_event_handler(handler)
+    }
+
+    /// Adds a callback to join rooms we've been invited to.
+    /// Ignores invites from anyone who is not on the allow_list.
     pub fn join_rooms(&self) {
-        let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
         let room_size_limit = self.config.room_size_limit;
-        client.add_event_handler(
+        self.client.add_event_handler(
             move |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
-                    // the invite we've seen isn't for us, but for someone else. ignore
                     return;
                 }
                 if !is_allowed(allow_list, room_member.sender.as_str(), &username) {
-                    // Sender is not on the allowlist
                     return;
                 }
                 info!("Received stripped room member event: {:?}", room_member);
 
-                // The event handlers are called before the next sync begins, but
-                // methods that change the state of a room (joining, leaving a room)
-                // wait for the sync to return the new room state so we need to spawn
-                // a new task for them.
                 tokio::spawn(async move {
                     info!("Autojoining room {}", room.room_id());
                     let mut delay = 2;
 
                     while let Err(err) = room.join().await {
-                        // retry autojoin due to synapse sending invites, before the
-                        // invited user can join for more information see
-                        // https://github.com/matrix-org/synapse/issues/4345
                         warn!(
                             "Failed to join room {} ({err:?}), retrying in {delay}s",
                             room.room_id()
@@ -278,7 +315,6 @@ impl Bot {
                             break;
                         }
                     }
-                    // Immediately leave if the room is too large
                     if is_room_too_large(&room, room_size_limit).await {
                         warn!(
                             "Room {} has too many members, refusing to join",
@@ -295,42 +331,32 @@ impl Bot {
         );
     }
 
-    /// Adds a callback to join rooms we've been invited to
-    /// Ignores invites from anyone who is not on the allow_list
-    /// Calls the callback each time a room is joined
+    /// Adds a callback to join rooms we've been invited to.
+    /// Ignores invites from anyone who is not on the allow_list.
+    /// Calls the callback each time a room is joined.
     pub fn join_rooms_callback<F, Fut>(&self, callback: Option<F>)
     where
         F: FnOnce(Room) -> Fut + Send + 'static + Clone + Sync,
         Fut: std::future::Future<Output = Result<(), ()>> + Send + 'static,
     {
-        let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
         let room_size_limit = self.config.room_size_limit;
-        client.add_event_handler(
+        self.client.add_event_handler(
             move |room_member: StrippedRoomMemberEvent, client: Client, room: Room| async move {
                 if room_member.state_key != client.user_id().unwrap() {
-                    // the invite we've seen isn't for us, but for someone else. ignore
                     return;
                 }
                 if !is_allowed(allow_list, room_member.sender.as_str(), &username) {
-                    // Sender is not on the allowlist
                     return;
                 }
                 info!("Received stripped room member event: {:?}", room_member);
 
-                // The event handlers are called before the next sync begins, but
-                // methods that change the state of a room (joining, leaving a room)
-                // wait for the sync to return the new room state so we need to spawn
-                // a new task for them.
                 tokio::spawn(async move {
                     info!("Autojoining room {}", room.room_id());
                     let mut delay = 2;
 
                     while let Err(err) = room.join().await {
-                        // retry autojoin due to synapse sending invites, before the
-                        // invited user can join for more information see
-                        // https://github.com/matrix-org/synapse/issues/4345
                         warn!(
                             "Failed to join room {} ({err:?}), retrying in {delay}s",
                             room.room_id()
@@ -344,7 +370,6 @@ impl Bot {
                             break;
                         }
                     }
-                    // Immediately leave if the room is too large
                     if is_room_too_large(&room, room_size_limit).await {
                         warn!(
                             "Room {} has too many members, refusing to join",
@@ -366,8 +391,7 @@ impl Bot {
         );
     }
 
-    /// Register a command that will be called for every non-command message
-    /// Useful for bots that want to act more like chatbots, having some response to every message
+    /// Register a handler that will be called for every non-command text message.
     pub fn register_text_handler<F, Fut>(&self, callback: F)
     where
         F: FnOnce(OwnedUserId, String, Room, OriginalSyncRoomMessageEvent) -> Fut
@@ -377,13 +401,11 @@ impl Bot {
             + Sync,
         Fut: std::future::Future<Output = Result<(), ()>> + Send + 'static,
     {
-        let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
         let command_prefix = self.command_prefix();
-        client.add_event_handler(
+        self.client.add_event_handler(
             move |event: OriginalSyncRoomMessageEvent, room: Room| async move {
-                // Ignore messages from rooms we're not in
                 if room.state() != RoomState::Joined {
                     return;
                 }
@@ -391,11 +413,9 @@ impl Bot {
                     return;
                 };
                 if !is_allowed(allow_list, event.sender.as_str(), &username) {
-                    // Sender is not on the allowlist
                     return;
                 }
                 let body = text_content.body.trim_start();
-                // _Ignore_ the message if it's a command
                 if is_command(&command_prefix, body) {
                     return;
                 }
@@ -408,11 +428,8 @@ impl Bot {
         );
     }
 
-    /// Register a text command
-    /// This will call the callback when the command is received
-    /// Sending no help text will make the command not show up in the help
-    /// FIXME: This adds a separate handler for every command, this can be made more efficient
-    /// by storing the commands in the State struct
+    /// Register a text command.
+    /// This will call the callback when the command is received.
     pub async fn register_text_command<F, Fut, OptString>(
         &self,
         command: &str,
@@ -425,49 +442,38 @@ impl Bot {
         OptString: Into<Option<String>>,
     {
         {
-            // Add the command to the help list
-            let mut global_state = GLOBAL_STATE.lock().await;
-            let state = global_state.get_mut(&self.name()).unwrap();
-            let mut state = state.lock().await;
+            let mut state = self.state.lock().await;
             state.help.push(HelpText {
                 command: command.to_string(),
                 args: args.into(),
                 short: short_help.into(),
             });
         }
-        let client = self.client.as_ref().expect("client not initialized");
         let allow_list = self.config.allow_list.clone();
         let username = self.full_name();
         let command = command.to_owned();
         let command_prefix = self.command_prefix();
-        client.add_event_handler(
-            // This handler matches pretty much every sync event, we'll use that and then filter ourselves
+        self.client.add_event_handler(
             move |event: AnySyncMessageLikeEvent, room: Room| async move {
-                // Ignore messages from rooms we're not in
                 if room.state() != RoomState::Joined {
                     return;
                 }
-                // Ignore non-message events
                 let AnySyncMessageLikeEvent::RoomMessage(event) = event else {
                     return;
                 };
-                // Must be unredacted
                 let Some(event) = event.as_original() else {
                     return;
                 };
-                // Only look at text messages
                 let MessageType::Text(_) = event.content.msgtype else {
                     return;
                 };
                 let text_content = event.content.body();
                 if !is_allowed(allow_list, event.sender.as_str(), &username) {
-                    // Sender is not on the allowlist
                     return;
                 }
                 let body = text_content.trim_start();
                 if let Some(input_command) = get_command(&command_prefix, body) {
                     if input_command == command {
-                        // Call the callback
                         if let Err(e) = callback(event.sender.clone(), body.to_string(), room).await
                         {
                             error!("Error running command: {} - {:?}", command, e);
@@ -478,25 +484,48 @@ impl Bot {
         );
     }
 
-    /// Run the bot continuously
-    /// This function takes ownership of the bot, we'll be moving data out of it for use in the function closures
+    /// Run the bot's sync loop continuously.
+    /// Returns on the first sync error.
     pub async fn run(&self) -> anyhow::Result<()> {
         self.register_help_command().await;
-        let client = self.client.as_ref().expect("client not initialized");
+        self.run_sync_loop().await
+    }
 
+    /// Run the bot's sync loop with automatic retry on errors.
+    pub async fn run_with_retry(&self, retry_config: RetryConfig) -> anyhow::Result<()> {
+        self.register_help_command().await;
+
+        let mut retries = 0;
+        loop {
+            match self.run_sync_loop().await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    retries += 1;
+                    error!("Sync error (retry {retries}): {e}");
+                    if let Some(max) = retry_config.max_retries {
+                        if retries >= max {
+                            return Err(e);
+                        }
+                    }
+                    sleep(retry_config.delay).await;
+                }
+            }
+        }
+    }
+
+    /// Inner sync loop used by both `run` and `run_with_retry`.
+    async fn run_sync_loop(&self) -> anyhow::Result<()> {
         let filter = FilterDefinition::with_lazy_loading();
         let mut sync_settings = SyncSettings::default().filter(filter.into());
 
-        // If we've already synced through a certain point, we'll sync the latest.
         if let Some(sync_token) = &self.sync_token {
             sync_settings = sync_settings.token(sync_token);
         }
-        // This loops until we kill the program or an error happens.
-        client
+
+        self.client
             .sync_with_result_callback(sync_settings, |sync_result| async move {
                 let response = sync_result?;
 
-                // We persist the token each time to be able to restore our session
                 self.persist_sync_token(response.next_batch)
                     .await
                     .map_err(|err| Error::UnknownError(err.into()))?;
@@ -509,53 +538,43 @@ impl Bot {
     }
 
     async fn persist_sync_token(&self, sync_token: String) -> anyhow::Result<()> {
-        let serialized_session = fs::read_to_string(self.session_file().clone()).await?;
+        let serialized_session = fs::read_to_string(self.session_file()).await?;
         let mut full_session: FullSession = serde_json::from_str(&serialized_session)?;
 
         full_session.sync_token = Some(sync_token);
         let serialized_session = serde_json::to_string(&full_session)?;
-        fs::write(self.session_file().clone(), serialized_session).await?;
+        fs::write(self.session_file(), serialized_session).await?;
 
         Ok(())
     }
 
-    /// Get the state directory for the bot
+    /// Get the state directory for the bot.
     pub fn state_dir(&self) -> PathBuf {
-        if let Some(state_dir) = &self.config.state_dir {
-            PathBuf::from(expand_tilde(state_dir))
-        } else {
-            dirs::state_dir()
-                .expect("no state_dir directory found")
-                .join(self.name())
-        }
+        self.config.state_dir()
     }
 
-    /// Get the name of the bot
+    /// Get the name of the bot.
     pub fn name(&self) -> String {
-        self.config
-            .name
-            .clone()
-            .unwrap_or_else(|| self.config.login.username.clone())
+        self.config.name()
     }
 
-    /// Get the full name of the bot
+    /// Get the full Matrix user ID of the bot.
     pub fn full_name(&self) -> String {
-        self.client().user_id().unwrap().to_string()
+        self.client.user_id().unwrap().to_string()
     }
 
-    /// Get the client used by the bot
+    /// Get the underlying matrix-sdk Client.
     pub fn client(&self) -> &Client {
-        self.client.as_ref().expect("client not initialized")
+        &self.client
     }
 
-    /// Get the command prefix for the bot
+    /// Get the command prefix for the bot.
     pub fn command_prefix(&self) -> String {
         let prefix = self
             .config
             .command_prefix
             .clone()
             .unwrap_or_else(|| format!("!{} ", self.name()));
-        // If the prefix is 1 character, we'll return it as it. If it's more than 1 character, we'll ensure it ends with a space
         if prefix.len() == 1 || prefix.ends_with(' ') {
             prefix
         } else {
@@ -566,7 +585,6 @@ impl Bot {
 
 /// Verify if the sender is on the allow_list
 fn is_allowed(allow_list: Option<String>, sender: &str, username: &str) -> bool {
-    // Check to see if it's from ourselves, in which case we should ignore it
     if sender == username {
         false
     } else if let Some(allow_list) = allow_list {
@@ -597,7 +615,7 @@ pub fn get_command<'a>(command_prefix: &str, text: &'a str) -> Option<&'a str> {
 fn expand_tilde(path: &str) -> String {
     if path.starts_with("~/") {
         if let Some(home_dir) = dirs::home_dir() {
-            let without_tilde = &path[1..]; // Remove the '~' and keep the rest of the path
+            let without_tilde = &path[1..];
             return home_dir.display().to_string() + without_tilde;
         }
     }
@@ -611,7 +629,6 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
         session_file.to_string_lossy()
     );
 
-    // The session was serialized as JSON in a file.
     let serialized_session = fs::read_to_string(session_file).await?;
     let FullSession {
         client_session,
@@ -619,7 +636,6 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
         sync_token,
     } = serde_json::from_str(&serialized_session)?;
 
-    // Build the client with the previous settings from the session.
     let client = Client::builder()
         .homeserver_url(client_session.homeserver)
         .build()
@@ -627,7 +643,6 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
 
     info!("Restoring session for {}…", &user_session.meta.user_id);
 
-    // Restore the Matrix user session.
     client.restore_session(user_session).await?;
 
     info!("Done!");
@@ -636,7 +651,7 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
 }
 
 /// Login with a new device.
-async fn login(
+async fn do_login(
     state_dir: &Path,
     session_file: &Path,
     homeserver_url: &str,
@@ -648,7 +663,6 @@ async fn login(
     let (client, client_session) = build_client(state_dir, homeserver_url.to_owned()).await?;
     let matrix_auth = client.matrix_auth();
 
-    // If there's no password, ask for it
     let password = match password {
         Some(password) => password.clone(),
         None => {
@@ -676,7 +690,6 @@ async fn login(
         }
     }
 
-    // Persist the session to reuse it later.
     let user_session = matrix_auth
         .session()
         .expect("A logged-in client should have a session");
