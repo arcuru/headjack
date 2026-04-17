@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use matrix_sdk::RoomMemberships;
 use matrix_sdk::RoomState;
 use matrix_sdk::ruma::OwnedUserId;
@@ -16,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::fs;
 use tokio::sync::Mutex;
@@ -29,11 +29,10 @@ pub use utils::*;
 // is 'static.
 // This is a bit of a pain, so we need to use a global state to store the actual bot state for ease of use.
 
-lazy_static! {
-    ///  Stores the global state for all bots.
-    /// The key is the user ID of the bot
-    static ref GLOBAL_STATE: Mutex<HashMap<String, Mutex<State>>> = Mutex::new(HashMap::new());
-}
+/// Stores the global state for all bots.
+/// The key is the user ID of the bot
+static GLOBAL_STATE: LazyLock<Mutex<HashMap<String, Mutex<State>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The data needed to re-build a client.
 #[derive(Debug, Serialize, Deserialize)]
