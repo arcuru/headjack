@@ -1,15 +1,15 @@
+use matrix_sdk::RoomMemberships;
+use matrix_sdk::RoomState;
 use matrix_sdk::event_handler::{EventHandler, EventHandlerHandle};
+use matrix_sdk::ruma::OwnedUserId;
+use matrix_sdk::ruma::events::AnySyncMessageLikeEvent;
 use matrix_sdk::ruma::events::room::member::StrippedRoomMemberEvent;
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
-use matrix_sdk::ruma::events::AnySyncMessageLikeEvent;
-use matrix_sdk::ruma::OwnedUserId;
-use matrix_sdk::RoomMemberships;
-use matrix_sdk::RoomState;
 use matrix_sdk::{
-    authentication::matrix::MatrixSession, config::SyncSettings,
-    ruma::api::client::filter::FilterDefinition, Client, Error, LoopCtrl, Room,
+    Client, Error, LoopCtrl, Room, authentication::matrix::MatrixSession, config::SyncSettings,
+    ruma::api::client::filter::FilterDefinition,
 };
 use regex::Regex;
 use serde::de::DeserializeOwned;
