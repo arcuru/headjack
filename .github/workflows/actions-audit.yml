@@ -1,0 +1,15 @@
+name: "Deps: Actions Audit"
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
+jobs:
+  audit:
+    uses: arcuru/actions/.github/workflows/actions-audit.yml@863120f2dbc739f0b9a66c5c01e85b87d7551ac8 # v0.3.1

@@ -1,0 +1,24 @@
+# zizmor configuration — https://docs.zizmor.sh/configuration/
+#
+# Each suppression below is a deliberate, reviewed exception; new findings
+# should be fixed, not added here. Ignores are pinned by line so a shifted
+# target reports rather than masks.
+rules:
+  secrets-inherit:
+    ignore:
+      # PAT_TOKEN reaches the reusable workflow through its own
+      # `environment: automation`. A job that calls a reusable workflow cannot
+      # declare an environment itself, so passing the secret explicitly here
+      # would read it outside that environment and hand over an empty value.
+      - actions-update.yml:20
+      - cargo-update.yml:20
+      - flake-update.yml:20
+  ref-version-mismatch:
+    ignore:
+      # dtolnay/rust-toolchain publishes no releases and distributes via
+      # branches, so `# master` names the branch the pin tracks rather than a
+      # version; zizmor resolves it as a ref and reports the expected divergence
+      # from the branch tip. Deps: Actions Audit covers these pins instead,
+      # failing when the pinned commit is no longer reachable from that branch.
+      - release-plz.yml:28
+      - release-plz.yml:64
