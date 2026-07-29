@@ -11,4 +11,4 @@ permissions:
 
 jobs:
   audit:
-    uses: arcuru/actions/.github/workflows/security-audit.yml@31c804a9c15602300e5e292e80cac1ad5512a21a # v0.2.0
+    uses: arcuru/actions/.github/workflows/security-audit.yml@863120f2dbc739f0b9a66c5c01e85b87d7551ac8 # v0.3.1

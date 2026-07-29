@@ -17,9 +17,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup Nix
-        uses: arcuru/actions/.github/actions/setup-nix@31c804a9c15602300e5e292e80cac1ad5512a21a # v0.2.0
+        uses: arcuru/actions/.github/actions/setup-nix@863120f2dbc739f0b9a66c5c01e85b87d7551ac8 # v0.3.1
 
       - name: Lint
         run: |
