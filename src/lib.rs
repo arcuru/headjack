@@ -8,8 +8,7 @@ use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use matrix_sdk::{
-    Client, Error, LoopCtrl, Room, config::SyncSettings,
-    authentication::matrix::MatrixSession,
+    Client, Error, LoopCtrl, Room, authentication::matrix::MatrixSession, config::SyncSettings,
     ruma::api::client::filter::FilterDefinition,
 };
 use regex::Regex;
@@ -710,11 +709,7 @@ async fn build_client(
     _state_dir: &Path,
     homeserver: String,
 ) -> anyhow::Result<(Client, ClientSession)> {
-    match Client::builder()
-        .homeserver_url(&homeserver)
-        .build()
-        .await
-    {
+    match Client::builder().homeserver_url(&homeserver).build().await {
         Ok(client) => Ok((
             client,
             ClientSession {
