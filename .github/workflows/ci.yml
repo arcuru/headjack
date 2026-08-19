@@ -25,22 +25,22 @@ jobs:
 
       - name: Lint
         run: |
-          nix-fast-build --skip-cached --no-nom --no-link \
+          nix develop -c nix-fast-build --skip-cached --no-nom --no-link \
             -f '.#checks.x86_64-linux.lint'
-          nix-fast-build --skip-cached --no-nom --no-link \
+          nix develop -c nix-fast-build --skip-cached --no-nom --no-link \
             -f '.#checks.x86_64-linux.treefmt'
 
       - name: Test
         run: |
-          nix-fast-build --skip-cached --no-nom --no-link \
+          nix develop -c nix-fast-build --skip-cached --no-nom --no-link \
             -f '.#checks.x86_64-linux.test'
 
       - name: Doc
         run: |
-          nix-fast-build --skip-cached --no-nom --no-link \
+          nix develop -c nix-fast-build --skip-cached --no-nom --no-link \
             -f '.#checks.x86_64-linux.doc'
 
       - name: Build
         run: |
-          nix-fast-build --skip-cached --no-nom --no-link \
+          nix develop -c nix-fast-build --skip-cached --no-nom --no-link \
             -f '.#checks.x86_64-linux.build'
