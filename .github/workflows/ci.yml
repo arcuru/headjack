@@ -16,12 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Nix
-        uses: arcuru/actions/.github/actions/setup-nix@863120f2dbc739f0b9a66c5c01e85b87d7551ac8 # v0.3.1
+        uses: arcuru/actions/.github/actions/setup-nix@3cee03dd694bcbfe4a64ae899f4b9a7cbdfe357c # v0.5.0
 
       - name: Lint
         run: |
