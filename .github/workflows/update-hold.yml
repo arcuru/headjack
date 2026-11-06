@@ -1,3 +1,6 @@
+# PAT_TOKEN-backed label removal re-triggers the Hold Gate; GITHUB_TOKEN
+# events would leave its failing check unchanged. The reusable workflow gets
+# the environment secret through environment: automation and secrets: inherit.
 name: "Deps: Hold Expiry"
 
 on:
@@ -8,8 +11,11 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  checks: write
 
 jobs:
   update-hold:
-    uses: arcuru/actions/.github/workflows/update-hold.yml@863120f2dbc739f0b9a66c5c01e85b87d7551ac8 # v0.3.1
+    if: github.repository_owner == 'arcuru'
+    uses: arcuru/actions/.github/workflows/update-hold.yml@3cee03dd694bcbfe4a64ae899f4b9a7cbdfe357c # v0.5.0
+    with:
+      environment: automation
+    secrets: inherit
